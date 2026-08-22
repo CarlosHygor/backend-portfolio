@@ -1,325 +1,262 @@
 # Portfólio de Desenvolvimento Backend
 🌎 *[Click here for the English version / Clique aqui para a versão em inglês](#english-version)*
 
-## 1. Visão Geral e Metodologia
+# 🏢 Hierarchical Team Management System
 
-O projeto consiste no desenvolvimento de um sistema web para automatizar a geração, o envio e a gestão de relatórios anuais de Pesquisa e Desenvolvimento (P&D) exigidos pela SUFRAMA para empresas instaladas na Zona Franca de Manaus.
+> **Status:** Em Produção | **Arquitetura:** Layered Architecture | **Ambiente:** Devcontainers (Docker)
 
-A aplicação adota uma arquitetura baseada em microsserviços lógicos, utilizando **Angular** (TypeScript) no front-end e **Spring Boot** (Java) no back-end. A estrutura do código da API baseia-se em uma organização orientada a *features* (por exemplo, o pacote `usuario` encapsula seus próprios controladores, serviços, repositórios e modelos). Essa decisão favoreceu a coesão sem a rigidez e a complexidade de um *Domain-Driven Design (DDD)* estrito, provando-se ideal para o escopo e a necessidade de escalabilidade da equipe.
+Este projeto é um sistema robusto de gestão hierárquica de equipes, desenvolvido para suportar controle de acessos em múltiplos níveis, dashboards analíticos e renderização de mapas interativos. A aplicação foi projetada com foco em alta performance, segurança e manutenibilidade, abstraindo a complexidade de regras de negócio em um design limpo e escalável.
 
-Durante o desenvolvimento, utilizamos a metodologia ágil **SCRUM**, que permitiu entregas iterativas e constante validação com as necessidades de negócio do cliente. Atuei ativamente não apenas na escrita de código, mas também na modelagem de requisitos e na concepção da arquitetura inicial, aprendendo a equilibrar padrões rígidos de engenharia de software com entregas ágeis e prazos reais.
+---
 
-## 2. Arquitetura e Decisões
+## 🏗 Visão Geral e Arquitetura
 
-Para garantir separação de responsabilidades e viabilizar o fluxo de deploy automatizado, o sistema foi desenhado com um back-end *stateless*, um banco de dados relacional e a delegação do armazenamento de arquivos de evidências diretamente para nuvem.
+O sistema implementa uma **Arquitetura em Camadas (Layered Architecture)** clássica, separando claramente as responsabilidades de roteamento (Controllers), lógica de negócios (Services) e persistência de dados (Repositories). Essa abordagem garante que o sistema seja testável e que as regras de domínio não vazem para as camadas de apresentação.
+
+Para garantir paridade absoluta entre os ambientes de desenvolvimento e produção, toda a stack de desenvolvimento foi encapsulada utilizando **Devcontainers** e Docker Compose. Isso elimina a clássica síndrome de "na minha máquina funciona", isolando dependências (banco de dados, cache, backend) e padronizando o ambiente para qualquer membro da equipe de engenharia.
+
+### Fluxo da Arquitetura
 
 ```mermaid
-flowchart TD
-    %% Entidades
-    Client[("Navegador (Usuário)")]
-    FrontEnd["Front-end\n(Angular)"]
-    BackEnd["Back-end REST API\n(Spring Boot / Java 17)"]
-    Database[("Banco de Dados Relacional\n(MySQL)")]
-    GoogleDrive(("API Google Drive\n(OAuth2)"))
-
-    %% Relações
-    Client -->|HTTPS| FrontEnd
-    FrontEnd <-->|REST / JSON + JWT| BackEnd
-    BackEnd <-->|JPA / Hibernate| Database
-    BackEnd <-->|Upload/Download Assíncrono| GoogleDrive
-
-    %% Estilos
-    classDef client fill:#f9f9f9,stroke:#333,stroke-width:2px;
-    classDef front fill:#dd4b39,stroke:#333,stroke-width:2px,color:#fff;
-    classDef back fill:#6db33f,stroke:#333,stroke-width:2px,color:#fff;
-    classDef db fill:#00758f,stroke:#333,stroke-width:2px,color:#fff;
-    classDef drive fill:#34a853,stroke:#333,stroke-width:2px,color:#fff;
-
-    class Client client;
-    class FrontEnd front;
-    class BackEnd back;
-    class Database db;
-    class GoogleDrive drive;
+graph TD
+    Client[Client Browser / Mobile] -->|HTTP/HTTPS Requests| Controller[Controller Layer]
+    
+    subgraph Devcontainer Environment
+        Controller -->|DTOs| Service[Service Layer - Business Logic]
+        Service -->|Entities| Repository[Repository Layer - Data Access]
+        Service --> Security[Security Context / JWT]
+        Service --> MemoryCache[In-Memory Cache / Caffeine]
+    end
+    
+    Repository -->|JPA / Hibernate| DB[(Relational Database)]
 ```
 
-## 3. Destaque Técnico 1: Integração Assíncrona e Resiliente (Google Drive)
+---
 
-**O Desafio:**
-O sistema exige a organização centralizada de evidências de atividades (arquivos, planilhas, PDFs). Era necessário gerar hierarquias de pastas completas (`Projeto > Atividade > Subatividade`) e realizar o upload de múltiplos arquivos pesados. Fazer isso de forma síncrona bloqueava a *thread* HTTP principal, o que gerava *timeouts* de requisição e prejudicava drasticamente a experiência do usuário na interface.
+## 🚀 Destaques Técnicos
 
-**A Solução:**
-Desenvolvemos uma integração utilizando a API do Google Drive com autenticação fluída baseada em OAuth2 e Refresh Tokens. O gargalo de performance foi solucionado aplicando o modelo assíncrono (`@Async` no Spring Boot), empurrando os *uploads* e criação de pastas para *threads* em *background*.
+### 1. Otimização de Payload Geográfico (GeoJSON)
 
-Além disso, implementamos um padrão de *Retry* com *Backoff Exponencial* para lidar com falhas temporárias de rede (ex: SocketTimeoutException) ou instabilidades da API do Google (Erros HTTP 5xx), garantindo a consistência das referências salvas no banco de dados.
+Um dos maiores desafios do projeto foi o processamento e envio de dados geoespaciais (shapes de mapas em GeoJSON) para os dashboards interativos. O payload original de fronteiras continha mais de 62.000 linhas, causando latência severa nas requisições.
 
-**Snippet (Higienizado):**
+A solução foi implementada em três frentes arquiteturais:
+1. **Cache em Memória (Server-side):** Ao invés de consultar e desserializar o arquivo em cada requisição, os shapes são carregados em um mapa estático (`HashMap` / Caffeine) em tempo de inicialização da aplicação.
+2. **Compressão GZip:** Ativada no nível da aplicação/servidor, reduzindo drasticamente o tráfego de rede (de ~350KB para ~80KB por requisição de mapa).
+3. **Estratégias de Cache HTTP (Browser-side):** Implementação de cabeçalhos `Cache-Control` nas respostas para evitar que os clientes baixem shapes estáticos repetidamente.
+
+**Snippet Estrutural (Configuração de Memória e HTTP Cache):**
 
 ```java
 @Service
-public class GoogleDriveService {
+public class MapShapeManagementService {
     
-    // Configurações, injeção de dependências e logger...
+    // In-Memory cache for fast spatial data retrieval
+    private Map<String, Map<String, SpatialDataDTO>> shapesCache = new HashMap<>();
+    private final ObjectMapper objectMapper;
+    private final Resource spatialResource;
 
-    @Async
-    @Transactional
-    public void uploadEvidenciaAsync(
-        Long evidenciaId, String refreshToken, String pastaSubAtividadeId, 
-        String nomeArquivo, String mimeType, byte[] fileContent
-    ) {
-        try {
-            final String operacaoNome = "Upload Evidência ID: " + evidenciaId;
-            
-            // Método utilitário que engloba retentativas (retry pattern) e backoff exponencial
-            String driveFileId = executarComRetry(() -> {
-                Drive driveClient = getDriveService(refreshToken); 
-                
-                File fileMetadata = new File();
-                fileMetadata.setName(nomeArquivo);
-                fileMetadata.setParents(Collections.singletonList(pastaSubAtividadeId)); 
-                
-                ByteArrayContent mediaContent = new ByteArrayContent(mimeType, fileContent);
-                
-                File file = driveClient.files().create(fileMetadata, mediaContent)
-                    .setFields("id, webContentLink, webViewLink")
-                    .execute();
-                    
-                return file.getId();
-            }, operacaoNome);
-            
-            // Persistência: só acontece se os retries do drive forem bem-sucedidos
-            Evidencia evidencia = evidenciaRepository.findById(evidenciaId).orElse(null);
-            if (evidencia != null) {
-                evidencia.setDriveFileId(driveFileId); 
-                evidenciaRepository.save(evidencia); 
-                logger.info("Upload de Evidência {} concluído com sucesso no Drive.", evidenciaId);
-            }
-                
-        } catch (Exception e) {
-            // Logamos para que uma rotina de monitoramento saiba quais uploads falharam
-            logger.error("Falha crítica (irreversível após retries) no upload: {}", e.getMessage());
+    @PostConstruct
+    public void loadSpatialDataToMemory() {
+        try (InputStream inputStream = spatialResource.getInputStream()) {
+            TypeReference<Map<String, Map<String, SpatialDataDTO>>> typeRef = new TypeReference<>() {};
+            this.shapesCache = objectMapper.readValue(inputStream, typeRef);
+            log.info("Spatial data successfully loaded into memory.");
+        } catch (IOException e) {
+            log.error("Failed to load spatial structures", e);
         }
+    }
+}
+
+@RestController
+@RequestMapping("/api/v1/maps")
+public class MapController {
+
+    @GetMapping("/shapes/{regionId}")
+    public ResponseEntity<SpatialResponseDTO> getRegionShapes(@PathVariable Long regionId) {
+        SpatialResponseDTO response = mapIntegrationService.getRegionShapes(regionId);
+        
+        // Leveraging HTTP Browser Cache to prevent redundant downloads of heavy spatial data
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.maxAge(30, TimeUnit.DAYS))
+            .body(response);
     }
 }
 ```
 
-## 4. Destaque Técnico 2: Isolamento de Contexto (Multi-Tenancy)
+### 2. Segurança e SOLID na Divisão de Camadas (Autenticação JWT)
 
-**O Desafio:**
-O sistema atua com um escopo forte de multi-tenancy a nível de Projetos. Um único usuário pode atuar em dezenas de projetos, assumindo funções e permissões distintas em cada um (ex: Gestor no Projeto A e Leitor no Projeto B). Exigir o tráfego do `projectId` como parâmetro em todas as rotas *REST* criava poluição visual no código, além de representar uma grande falha potencial de Insecure Direct Object Reference (IDOR) caso validações fossem esquecidas.
+Para o controle hierárquico de acessos (`ManagementNode`, `TeamMember`, `Admin`), adotamos o padrão **JWT (JSON Web Tokens)**. 
 
-**A Solução:**
-Desenvolvemos um fluxo de **Token de Contexto (JWT Customizado)**. O usuário faz o login primário e obtém uma lista de seus projetos. Ao selecionar um, ele emite uma requisição que retorna um novo JWT de acesso limitado. 
+Para manter os Controllers limpos e não inflar os Services com dependências diretas de autenticação, o Princípio da Responsabilidade Única (Single Responsibility Principle) e a Inversão de Dependência (Dependency Inversion) do SOLID foram rigorosamente aplicados. 
 
-Este novo token possui as *claims* injetadas relativas apenas àquele projeto (`projeto_id`, `funcao_id`, e lista de `permissoesLocais`). Assim, o back-end sabe o contexto por natureza da autenticação. Implementamos uma classe utilitária de intercepção que fica responsável por abstrair essas *claims* diretamente do contexto do Spring Security, garantindo segurança a nível de arquitetura.
+Foi criado um componente injetável `AuthenticatedContext` que extrai as propriedades do contexto de segurança do Spring, permitindo que a camada de serviço recupere os IDs e regras do usuário de forma transparente, sem violar a pureza arquitetural.
 
-**Snippet (Higienizado):**
+**Snippet Estrutural (Contexto de Segurança Isolado):**
 
 ```java
 @Component
-public class ContextoAutenticado {
+public class AuthenticatedContext {
 
-    // Lê o JWT extraído e decodificado pelo Filtro do Spring Security
-    private DecodedJWT getJwtToken() {
-        Authentication autenticacao = SecurityContextHolder.getContext().getAuthentication();
+    private DecodedJWT getDecodedToken() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getDetails() == null) {
+            throw new UnauthorizedException("No security context found.");
+        }
+        return (DecodedJWT) auth.getDetails();
+    }
 
-        if (autenticacao == null || autenticacao.getDetails() == null) {
-            throw new IllegalStateException("Usuário não autenticado ou token JWT ausente.");
+    public Long getActiveUserId() {
+        DecodedJWT token = getDecodedToken();
+        String tokenType = token.getClaim("tokenType").asString();
+
+        if ("FULL_ACCESS".equals(tokenType)) {
+            return token.getClaim("userId").asLong();
+        }
+        
+        if ("RESTRICTED".equals(tokenType)) {
+            // Complex resolution logic abstracted away from the Service layer
+            return extractRestrictedId(token);
         }
 
-        return (DecodedJWT) autenticacao.getDetails();
-    }
-    
-    public Long getProjetoId() {
-        return getJwtToken().getClaim("projeto_id").asLong();
-    }
-
-    public List<String> getPermissoesLocais() {
-        List<String> permissoesLocais = getJwtToken().getClaim("permissoesLocais").asList(String.class);
-        return permissoesLocais != null ? permissoesLocais : List.of();
-    }
-
-    /**
-     * Utilizado internamente nas camadas de serviço para validar autorização.
-     * Caso o usuário não tenha o papel exigido, o fluxo HTTP aborta imediatamente.
-     */
-    public void exigirPermissao(String permissao) {
-        if (!getPermissoesLocais().contains(permissao)) {
-            throw new AccessDeniedException("Acesso negado. Permissão local necessária: " + permissao);
-        }
+        throw new IllegalArgumentException("Unknown token structure.");
     }
 }
 ```
 
-## 5. Deploy e CI/CD
+### 3. Documentação e Contratos de API (Swagger / OpenAPI)
 
-Com o objetivo de diminuir a defasagem entre o ambiente de desenvolvimento e o ambiente de produção (o famoso *"na minha máquina funciona"*), a aplicação está estritamente conteinerizada com **Docker**.
+Toda a superfície de comunicação da API foi mapeada utilizando **Swagger (OpenAPI 3)**. A padronização dos contratos garante que a equipe de front-end ou integradores externos compreendam perfeitamente os DTOs de entrada e saída, requisitos de cabeçalho (tokens) e tipos de retorno, reduzindo o tempo de integração e comunicação entre times de engenharia.
 
-A estrutura do `Dockerfile` utiliza uma abordagem de *Multi-Stage Build* nativa do Maven com Java Alpine, garantindo uma imagem final limpa (com apenas a JRE e o `.jar` compilado) e segura.
-
-Nosso fluxo de **CI/CD** foi estabelecido utilizando *workflows* automatizados do **GitHub Actions**. Para orquestração e deploy contínuo em servidor de produção, usamos o **Dockploy**, que garante que assim que o código atinge as ramificações de qualidade estabelecidas, os contêineres sejam re-disponibilizados na infraestrutura do cliente sem instabilidade ou *downtimes* perceptíveis (*zero-downtime deployment* em essência).
+---
 
 <br>
-<hr>
 <br>
 
-<a name="english-version"></a>
-🇧🇷 *[Clique aqui para voltar para a versão em Português](#portfólio-de-desenvolvimento-backend)*
+<a id="english-version"></a>
+[🇧🇷 Leia em Português](#)
 
-# Backend Development Portfolio
+# 🏢 Hierarchical Team Management System
 
-## 1. Overview and Methodology
+> **Status:** Production | **Architecture:** Layered Architecture | **Environment:** Devcontainers (Docker)
 
-The project consists of developing a web system to automate the generation, submission, and management of annual Research and Development (R&D) reports required by SUFRAMA for companies located in the Manaus Free Trade Zone.
+This project is a robust hierarchical team management system designed to support multi-level access controls, analytical dashboards, and interactive map rendering. The application is built with a focus on high performance, security, and maintainability, abstracting complex business rules into a clean and scalable design.
 
-The application adopts a logical microservices-based architecture, using **Angular** (TypeScript) on the front-end and **Spring Boot** (Java) on the back-end. The API code structure is based on a feature-oriented organization (e.g., the `usuario` package encapsulates its own controllers, services, repositories, and models). This decision promoted cohesion without the rigidity and complexity of a strict *Domain-Driven Design (DDD)*, proving ideal for the project's scope and the team's scalability needs.
+---
 
-During development, we used the **SCRUM** agile methodology, allowing iterative deliveries and constant validation with the client's business needs. I actively participated not only in writing code but also in requirements modeling and the initial architecture design, learning how to balance strict software engineering standards with agile deliveries and real-world deadlines.
+## 🏗 Overview and Architecture
 
-## 2. Architecture and Decisions
+The system implements a classic **Layered Architecture**, strictly separating routing responsibilities (Controllers), business logic (Services), and data persistence (Repositories). This approach ensures that the system remains highly testable and prevents domain rules from leaking into the presentation layer.
 
-To ensure separation of concerns and enable an automated deployment flow, the system was designed with a *stateless* back-end, a relational database, and the delegation of evidence file storage directly to the cloud.
+To guarantee absolute parity between development and production environments, the entire engineering stack was containerized using **Devcontainers** and Docker Compose. This effectively eliminates the "it works on my machine" syndrome, isolating dependencies (databases, caching, backend) and standardizing the workspace for any team member.
+
+### Architecture Flow
 
 ```mermaid
-flowchart TD
-    %% Entities
-    Client[("Browser (User)")]
-    FrontEnd["Front-end\n(Angular)"]
-    BackEnd["Back-end REST API\n(Spring Boot / Java 17)"]
-    Database[("Relational Database\n(MySQL)")]
-    GoogleDrive(("Google Drive API\n(OAuth2)"))
-
-    %% Relationships
-    Client -->|HTTPS| FrontEnd
-    FrontEnd <-->|REST / JSON + JWT| BackEnd
-    BackEnd <-->|JPA / Hibernate| Database
-    BackEnd <-->|Async Upload/Download| GoogleDrive
-
-    %% Styles
-    classDef client fill:#f9f9f9,stroke:#333,stroke-width:2px;
-    classDef front fill:#dd4b39,stroke:#333,stroke-width:2px,color:#fff;
-    classDef back fill:#6db33f,stroke:#333,stroke-width:2px,color:#fff;
-    classDef db fill:#00758f,stroke:#333,stroke-width:2px,color:#fff;
-    classDef drive fill:#34a853,stroke:#333,stroke-width:2px,color:#fff;
-
-    class Client client;
-    class FrontEnd front;
-    class BackEnd back;
-    class Database db;
-    class GoogleDrive drive;
+graph TD
+    Client[Client Browser / Mobile] -->|HTTP/HTTPS Requests| Controller[Controller Layer]
+    
+    subgraph Devcontainer Environment
+        Controller -->|DTOs| Service[Service Layer - Business Logic]
+        Service -->|Entities| Repository[Repository Layer - Data Access]
+        Service --> Security[Security Context / JWT]
+        Service --> MemoryCache[In-Memory Cache / Caffeine]
+    end
+    
+    Repository -->|JPA / Hibernate| DB[(Relational Database)]
 ```
 
-## 3. Technical Highlight 1: Async and Resilient Integration (Google Drive)
+---
 
-**The Challenge:**
-The system requires the centralized organization of activity evidence (files, spreadsheets, PDFs). It was necessary to generate complete folder hierarchies (`Project > Activity > Subactivity`) and upload multiple heavy files. Doing this synchronously blocked the main HTTP thread, causing request timeouts and drastically degrading the user experience on the interface.
+## 🚀 Technical Highlights
 
-**The Solution:**
-We developed an integration using the Google Drive API with fluid OAuth2 and Refresh Token-based authentication. The performance bottleneck was solved by applying the asynchronous model (`@Async` in Spring Boot), pushing uploads and folder creations to background threads.
+### 1. Geographic Payload Optimization (GeoJSON)
 
-Additionally, we implemented a *Retry* pattern with *Exponential Backoff* to handle temporary network failures (e.g., SocketTimeoutException) or Google API instabilities (HTTP 5xx Errors), ensuring the consistency of references saved in the database.
+One of the project's most significant bottlenecks was processing and transmitting geospatial data (GeoJSON map shapes) to interactive dashboards. The original boundary payload exceeded 62,000 lines, causing severe network latency.
 
-**Snippet (Sanitized):**
+We resolved this architecturally across three fronts:
+1. **In-Memory Cache (Server-side):** Instead of parsing the massive file on every request, the shapes are hydrated into a static map (`HashMap` / Caffeine pattern) at application startup via Jackson.
+2. **GZip Compression:** Enabled at the application/server level, drastically shrinking the network footprint (from ~350KB down to ~80KB per map request).
+3. **HTTP Caching Strategies (Browser-side):** Implemented strict `Cache-Control` headers, preventing clients from repeatedly downloading immutable static shapes.
+
+**Structural Snippet (Memory and HTTP Cache Configuration):**
 
 ```java
 @Service
-public class GoogleDriveService {
+public class MapShapeManagementService {
     
-    // Configurations, dependency injections, and logger...
+    // In-Memory cache for fast spatial data retrieval
+    private Map<String, Map<String, SpatialDataDTO>> shapesCache = new HashMap<>();
+    private final ObjectMapper objectMapper;
+    private final Resource spatialResource;
 
-    @Async
-    @Transactional
-    public void uploadEvidenciaAsync(
-        Long evidenciaId, String refreshToken, String pastaSubAtividadeId, 
-        String nomeArquivo, String mimeType, byte[] fileContent
-    ) {
-        try {
-            final String operacaoNome = "Upload Evidence ID: " + evidenciaId;
-            
-            // Utility method that encapsulates retries (retry pattern) and exponential backoff
-            String driveFileId = executarComRetry(() -> {
-                Drive driveClient = getDriveService(refreshToken); 
-                
-                File fileMetadata = new File();
-                fileMetadata.setName(nomeArquivo);
-                fileMetadata.setParents(Collections.singletonList(pastaSubAtividadeId)); 
-                
-                ByteArrayContent mediaContent = new ByteArrayContent(mimeType, fileContent);
-                
-                File file = driveClient.files().create(fileMetadata, mediaContent)
-                    .setFields("id, webContentLink, webViewLink")
-                    .execute();
-                    
-                return file.getId();
-            }, operacaoNome);
-            
-            // Persistence: only happens if drive retries are successful
-            Evidencia evidencia = evidenciaRepository.findById(evidenciaId).orElse(null);
-            if (evidencia != null) {
-                evidencia.setDriveFileId(driveFileId); 
-                evidenciaRepository.save(evidencia); 
-                logger.info("Upload of Evidence {} completed successfully on Drive.", evidenciaId);
-            }
-                
-        } catch (Exception e) {
-            // Logged so a monitoring routine knows which uploads failed
-            logger.error("Critical failure (irreversible after retries) on upload: {}", e.getMessage());
+    @PostConstruct
+    public void loadSpatialDataToMemory() {
+        try (InputStream inputStream = spatialResource.getInputStream()) {
+            TypeReference<Map<String, Map<String, SpatialDataDTO>>> typeRef = new TypeReference<>() {};
+            this.shapesCache = objectMapper.readValue(inputStream, typeRef);
+            log.info("Spatial data successfully loaded into memory.");
+        } catch (IOException e) {
+            log.error("Failed to load spatial structures", e);
         }
+    }
+}
+
+@RestController
+@RequestMapping("/api/v1/maps")
+public class MapController {
+
+    @GetMapping("/shapes/{regionId}")
+    public ResponseEntity<SpatialResponseDTO> getRegionShapes(@PathVariable Long regionId) {
+        SpatialResponseDTO response = mapIntegrationService.getRegionShapes(regionId);
+        
+        // Leveraging HTTP Browser Cache to prevent redundant downloads of heavy spatial data
+        return ResponseEntity.ok()
+            .cacheControl(CacheControl.maxAge(30, TimeUnit.DAYS))
+            .body(response);
     }
 }
 ```
 
-## 4. Technical Highlight 2: Context Isolation (Multi-Tenancy)
+### 2. Security and SOLID Principles (JWT Authentication)
 
-**The Challenge:**
-The system operates with a strong multi-tenancy scope at the Project level. A single user can participate in dozens of projects, assuming different roles and permissions in each (e.g., Manager in Project A and Reader in Project B). Requiring the `projectId` to be passed as a parameter in all *REST* routes created visual clutter in the code, and posed a major potential Insecure Direct Object Reference (IDOR) flaw if validations were missed.
+To handle hierarchical access controls (`ManagementNode`, `TeamMember`, `Admin`), we rely on **JWT (JSON Web Tokens)**.
 
-**The Solution:**
-We developed a **Context Token (Custom JWT)** flow. The user performs the primary login and retrieves a list of their projects. Upon selecting one, they issue a request that returns a new, limited-access JWT.
+To keep Controllers lean and prevent Services from bloating with direct security context dependencies, SOLID's Single Responsibility and Dependency Inversion principles were strictly followed.
 
-This new token has injected claims related only to that specific project (`projeto_id`, `funcao_id`, and a list of `permissoesLocais`). Thus, the back-end inherently knows the context through authentication. We implemented an interception utility class responsible for extracting these claims directly from the Spring Security context, ensuring architectural-level security.
+We built an injectable `AuthenticatedContext` component. It extracts security context properties directly from the framework's holding strategy, allowing the Service layer to transparently fetch user IDs and roles without breaking architectural purity.
 
-**Snippet (Sanitized):**
+**Structural Snippet (Isolated Security Context):**
 
 ```java
 @Component
-public class ContextoAutenticado {
+public class AuthenticatedContext {
 
-    // Reads the JWT extracted and decoded by the Spring Security Filter
-    private DecodedJWT getJwtToken() {
-        Authentication autenticacao = SecurityContextHolder.getContext().getAuthentication();
+    private DecodedJWT getDecodedToken() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || auth.getDetails() == null) {
+            throw new UnauthorizedException("No security context found.");
+        }
+        return (DecodedJWT) auth.getDetails();
+    }
 
-        if (autenticacao == null || autenticacao.getDetails() == null) {
-            throw new IllegalStateException("User not authenticated or missing JWT token.");
+    public Long getActiveUserId() {
+        DecodedJWT token = getDecodedToken();
+        String tokenType = token.getClaim("tokenType").asString();
+
+        if ("FULL_ACCESS".equals(tokenType)) {
+            return token.getClaim("userId").asLong();
+        }
+        
+        if ("RESTRICTED".equals(tokenType)) {
+            // Complex resolution logic abstracted away from the Service layer
+            return extractRestrictedId(token);
         }
 
-        return (DecodedJWT) autenticacao.getDetails();
-    }
-    
-    public Long getProjetoId() {
-        return getJwtToken().getClaim("projeto_id").asLong();
-    }
-
-    public List<String> getPermissoesLocais() {
-        List<String> permissoesLocais = getJwtToken().getClaim("permissoesLocais").asList(String.class);
-        return permissoesLocais != null ? permissoesLocais : List.of();
-    }
-
-    /**
-     * Used internally in service layers to validate authorization.
-     * If the user doesn't have the required role, the HTTP flow aborts immediately.
-     */
-    public void exigirPermissao(String permissao) {
-        if (!getPermissoesLocais().contains(permissao)) {
-            throw new AccessDeniedException("Access denied. Required local permission: " + permissao);
-        }
+        throw new IllegalArgumentException("Unknown token structure.");
     }
 }
 ```
 
-## 5. Deployment and CI/CD
+### 3. API Contracts and Documentation (Swagger / OpenAPI)
 
-Aiming to reduce the gap between the development environment and the production environment (the famous *"it works on my machine"* issue), the application is strictly containerized using **Docker**.
-
-The `Dockerfile` structure uses a native Maven *Multi-Stage Build* approach with Java Alpine, ensuring a clean (containing only the JRE and the compiled `.jar`) and secure final image.
-
-Our **CI/CD** workflow was established using automated **GitHub Actions** workflows. For orchestration and continuous deployment on the production server, we use **Dockploy**, which ensures that as soon as the code meets the established quality branches, the containers are automatically re-deployed in the client's infrastructure without instability or noticeable downtimes (essentially *zero-downtime deployment*).
+The entire API surface is mapped using **Swagger (OpenAPI 3)**. Standardizing these contracts ensures frontend teams or external integrators perfectly understand input/output DTOs, header requirements (tokens), and return structures, effectively eliminating integration friction and communication overhead.
